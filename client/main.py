@@ -1,8 +1,8 @@
 import sys
 sys.path.append(sys.path[0][:sys.path[0].rfind("/")])
 
-import traceback
 import threading
+import modules.logger as logger
 from modules.socket_utils import ClientSocket
 
 
@@ -10,11 +10,15 @@ client = ClientSocket()
 try:
 	client.connect("", 1234)
 except ConnectionRefusedError:
-	print("Connection refused.")
+	logger.log("Connection refused.", "Aborting.", flag=logger.FLAG_ERROR)
 	sys.exit(1)
 server_close_order = False
 
-print(client.receive(22).decode("utf-8"))
+logger.log_embed(f"Connected as {client.sock.getsockname()},",
+				 f" to {client.sock.getpeername()}",
+				 before=[], after=["", ""])
+
+logger.log(client.receive_msg(), "")
 
 
 def receive_thread_func():
@@ -24,28 +28,18 @@ def receive_thread_func():
 		try:
 
 			cmd = client.receive_cmd()
-			if not cmd:
+			if not cmd or cmd == "end":
 				break
-			print(f"Received command '{cmd}'.")
+			logger.log(f"Received:  {cmd}", flag=logger.FLAG_COMMAND)
 			if cmd == "quit":
 				server_close_order = True
 				client.close()
-				print()
-				print()
-				print("#####################################")
-				print("Server order. Closing client...")
-				print("Press enter to close...")
-				print("#####################################")
+				logger.log_embed("Server order. Closing client...",
+					"Press enter to close...", flag=logger.FLAG_ERROR)
 				break
 
 		except Exception as e:
-			print()
-			print()
-			print("#####################################")
-			print(f"[Exception occured] {e.__class__.__name__}: '{e}'.")
-			print()
-			traceback.print_exc()
-			print("#####################################")
+			logger.log_exception(e)
 
 
 def input_thread_func():
@@ -60,16 +54,11 @@ def input_thread_func():
 			if inp == "quit":
 				client.close()
 				break
+			logger.log(f"Sending:  {inp}", flag=logger.FLAG_COMMAND)
 			client.send_cmd(inp)
 
 		except Exception as e:
-			print()
-			print()
-			print("#####################################")
-			print(f"[Exception occured] {e.__class__.__name__}: '{e}'.")
-			print()
-			traceback.print_exc()
-			print("#####################################")
+			logger.log_exception(e)
 
 
 receive_thread = threading.Thread(target=receive_thread_func)
@@ -84,20 +73,12 @@ try:
 	input_thread.join()
 
 except KeyboardInterrupt:
-	print()
-	print()
-	print("#####################################")
-	print("Keyboard interrupt. Closing client...")
-	print("Press enter to close...")
-	print("#####################################")
+	logger.log_embed("Keyboard interrupt. Closing client...",
+		"Press enter to close...", flag=logger.FLAG_ERROR)
 
 else:
 	if not server_close_order:
-		print()
-		print()
-		print("#####################################")
-		print("Closing client...")
-		print("#####################################")
+		logger.log_embed("Closing client...", flag=logger.FLAG_ERROR)
 
 if not client.is_closed():
 	client.close()

@@ -1,4 +1,5 @@
 import socket
+import modules.logger as logger
 
 BUFFER_256 = 256
 BUFFER_512 = 512
@@ -36,7 +37,7 @@ class Socket:
 		totalsent = 0
 		while totalsent < length:
 			sent = self.sock.send(data[totalsent:totalsent + buffer_size])
-			print(f"  *** Sent {sent} bytes ***")
+#			logger.log(f"  *** Sent {sent} bytes ***")
 			if sent == 0:
 				raise RuntimeError(f"Socket connection broken. Total sent: {totalsent} bytes.")
 			totalsent = totalsent + sent
@@ -64,6 +65,19 @@ class Socket:
 	def receive_cmd(self, buffer_size: int = BUFFER_CMD) -> str:
 		data = self.receive(BUFFER_CMD, buffer_size)
 		return data.decode("utf-8").rstrip('\0')
+	
+	def send_msg(self, msg: str, encoding: str = "utf-8", buffer_size: int = BUFFER_1KB):
+		data = msg.encode(encoding)
+		length = len(data)
+		self.send_cmd(f"length={length}")
+		self.send_cmd(f"encoding={encoding}")
+		self.send(data, length, buffer_size)
+
+	def receive_msg(self, buffer_size: int = BUFFER_1KB) -> str:
+		length = int(self.receive_cmd().removeprefix("length="))
+		encoding = self.receive_cmd().removeprefix("encoding=")
+		data = self.receive(length, buffer_size)
+		return data.decode(encoding)
 
 	def send_file(self, file_path: str, dest_path: str, buffer_size: int = BUFFER_1MB):
 		self.send_cmd(f"dest_path={dest_path}")

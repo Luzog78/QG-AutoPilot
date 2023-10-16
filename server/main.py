@@ -1,8 +1,8 @@
 import sys
 sys.path.append(sys.path[0][:sys.path[0].rfind("/")])
 
-import traceback
 import threading
+import modules.logger as logger
 from modules.socket_utils import ServerSocket, ClientSocket
 
 
@@ -10,15 +10,13 @@ server = ServerSocket()
 server.bind("", 1234)
 server.listen(5)
 
-
-print("#####################################")
-print("Server is running...")
-print("  > Host:", server.sock.getsockname()[0])
-print("  > Port:", server.sock.getsockname()[1])
-print("  > Backlog:", server._backlog)
-print("#####################################")
-print()
-print()
+logger.log_embed("Server is running...",
+	f"  > Host: {server.sock.getsockname()[0]}",
+	f"  > Port: {server.sock.getsockname()[1]}",
+	f"  > Link: http://{server.sock.getsockname()[0]}:{server.sock.getsockname()[1]}/",
+	f"  > Backlog: {server._backlog}",
+	f"  > Clients: {len(server.clients)}",
+	before=[], after=["", ""])
 
 def incoming_thread_func():
 	while not server.is_closed():
@@ -28,19 +26,16 @@ def incoming_thread_func():
 			if server.is_closed():
 				continue
 			server.clients.append(client)
-			print(f"Connection accepted from {client.address}.")
-			client.send(bytes("Welcome to the server!", "utf-8"), 22)
+			logger.log(f"Connection accepted from {client.address}.", flag=logger.FLAG_LINK)
+			client.send_msg(">>> Welcome to the server! <<<")
 			threading.Thread(target=client_thread_func, args=(client,)).start()
 
+		except ConnectionResetError as e:
+			logger.log_exception(e)
+		except BrokenPipeError as e:
+			logger.log_exception(e)
 		except Exception as e:
-			print()
-			print()
-			print("#####################################")
-			print(f"[Exception occured] {e.__class__.__name__}: '{e}'.")
-			print("Closing server...")
-			print()
-			traceback.print_exc()
-			print("#####################################")
+			logger.log_exception(e)
 
 
 def client_thread_func(client: ClientSocket):
@@ -49,11 +44,11 @@ def client_thread_func(client: ClientSocket):
 		while not server.is_closed():
 			cmd = client.receive_cmd()
 			if not server.is_closed():
-				print(f"Received command '{cmd}' from {client.address}.")
+				logger.log(f"Received from {client.address}:  {cmd}", flag=logger.FLAG_COMMAND)
 			if cmd == "quit":
 				server.clients.remove(client)
 				if not server.is_closed():
-					print(f"Connection closed from {client.address}.")
+					logger.log(f"Connection closed from {client.address}.", flag=logger.FLAG_LINK)
 				try:
 					client.send_cmd("end")
 				except Exception:
@@ -61,14 +56,7 @@ def client_thread_func(client: ClientSocket):
 				break
 
 	except Exception as e:
-		print()
-		print()
-		print("#####################################")
-		print(f"[Exception occured] {e.__class__.__name__}: '{e}'.")
-		print("Closing server...")
-		print()
-		traceback.print_exc()
-		print("#####################################")
+		logger.log_exception(e)
 
 
 def input_thread_func():
@@ -90,32 +78,32 @@ def input_thread_func():
 
 			elif inp.startswith("broadcast "):
 				broadcast = inp.removeprefix("broadcast ")
+				logger.log(f"Broadcasting to {len(server.clients)} clients:  {broadcast}")
 				for client in server.clients:
+					logger.log(f"  > Sending to {client.address}:  {broadcast}", flag=logger.FLAG_COMMAND)
 					client.send_cmd(broadcast)
+				logger.log()
 
 			elif inp.startswith("info"):
-				print("Server is running...")
-				print("  > Host:", server.sock.getsockname()[0])
-				print("  > Port:", server.sock.getsockname()[1])
-				print("  > Backlog:", server._backlog)
+				logger.log("Server is running...",
+					f"  > Host: {server.sock.getsockname()[0]}",
+					f"  > Port: {server.sock.getsockname()[1]}",
+					f"  > Link: http://{server.sock.getsockname()[0]}:{server.sock.getsockname()[1]}/",
+					f"  > Backlog: {server._backlog}",
+					f"  > Clients: {len(server.clients)}",
+					"")
 
 			elif inp.startswith("clients"):
-				print(f"Clients ({len(server.clients)}):")
+				logger.log(f"Clients ({len(server.clients)}):")
 				for client in server.clients:
-					print(f"  > {client.address}")
+					logger.log(f"  > {client.address}")
+				logger.log()
 
 			else:
-				print(f"Received input '{inp}'.")
+				logger.log(f"Command not found:  {inp}", flag=logger.FLAG_ERROR)
 
 	except Exception as e:
-		print()
-		print()
-		print("#####################################")
-		print(f"[Exception occured] {e.__class__.__name__}: '{e}'.")
-		print("Closing server...")
-		print()
-		traceback.print_exc()
-		print("#####################################")
+		logger.log_exception(e)
 
 
 incoming_thread = threading.Thread(target=incoming_thread_func)
@@ -130,18 +118,10 @@ try:
 	input_thread.join()
 
 except KeyboardInterrupt:
-	print()
-	print()
-	print("#####################################")
-	print("Keyboard interrupt. Closing server...")
-	print("Press enter to close...")
-	print("#####################################")
+	logger.log_embed("Keyboard interrupt. Closing client...",
+		"Press enter to close...", flag=logger.FLAG_ERROR)
 
 else:
-	print()
-	print()
-	print("#####################################")
-	print("Closing server...")
-	print("#####################################")
+	logger.log_embed("Closing server...", flag=logger.FLAG_ERROR)
 
 server.close()
