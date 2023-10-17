@@ -30,6 +30,12 @@ class Socket:
 	
 	def is_closed(self) -> bool:
 		return self.sock._closed
+	
+	def get_llink(self) -> str:
+		return f"{self.sock.getsockname()[0]}:{self.sock.getsockname()[1]}"
+	
+	def get_rlink(self) -> str:
+		return f"{self.sock.getpeername()[0]}:{self.sock.getpeername()[1]}"
 
 	def send(self, data: bytes, length: int, buffer_size: int = -1):
 		if buffer_size == -1:
@@ -80,7 +86,7 @@ class Socket:
 		return data.decode(encoding)
 
 	def send_file(self, file_path: str, dest_path: str, buffer_size: int = BUFFER_1MB):
-		self.send_cmd(f"dest_path={dest_path}")
+		self.send_cmd(f"dest_path={dest_path}", BUFFER_1KB)
 		length = 0
 		with open(file_path, "rb") as file:
 			while True:
@@ -98,8 +104,8 @@ class Socket:
 				self.send(data, len(data))
 				sent += len(data)
 	
-	def receive_file(self, buffer_size: int = BUFFER_1MB):
-		dest_path = self.receive_cmd().removeprefix("dest_path=")
+	def receive_file(self, buffer_size: int = BUFFER_1MB) -> tuple[str, int]:
+		dest_path = self.receive_cmd(BUFFER_1KB).removeprefix("dest_path=")
 		length = int(self.receive_cmd().removeprefix("length="))
 		received = 0
 		with open(dest_path, "wb") as file:
@@ -109,6 +115,7 @@ class Socket:
 					raise RuntimeError(f"File receive error. Total received: {received} bytes.")
 				file.write(data)
 				received += len(data)
+		return dest_path, length
 
 
 class ClientSocket(Socket):

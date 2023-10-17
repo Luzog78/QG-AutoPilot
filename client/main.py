@@ -3,7 +3,8 @@ sys.path.append(sys.path[0][:sys.path[0].rfind("/")])
 
 import threading
 import modules.logger as logger
-from modules.socket_utils import ClientSocket
+from modules.socket_utils import Socket, ClientSocket
+from modules.command_utils import Command, ClientCommand
 
 
 client = ClientSocket()
@@ -21,11 +22,111 @@ logger.log_embed(f"Connected as {client.sock.getsockname()},",
 logger.log(client.receive_msg(), "")
 
 
+class HelpCommand(ClientCommand):
+	def execute(self, sender: Socket | None, label: str, args: list[str]) -> bool:
+		if len(args) > 0 and (args[0] == "?" or args[0].lower() == "help"):
+			self.log_usage()
+			return True
+		logger.log(f"Available commands ({len(commands)}):")
+		for command in commands:
+			logger.log(f"  > {command.aliases[0]}: {command.description}")
+		return True
+
+
+class InfoCommand(ClientCommand):
+	def execute(self, sender: Socket | None, label: str, args: list[str]) -> bool:
+		if len(args) > 0 and (args[0] == "?" or args[0].lower() == "help"):
+			self.log_usage()
+			return True
+		logger.log("Server is running...",
+			f"  > Host: {self.server.sock.getsockname()[0]}",
+			f"  > Port: {self.server.sock.getsockname()[1]}",
+			f"  > Link: http://{self.server.get_llink()}/",
+			f"  > Backlog: {self.server._backlog}",
+			f"  > Clients: {len(self.server.clients)}")
+		return True
+
+
+class SendCommand(ClientCommand):
+	def execute(self, sender: Socket | None, label: str, args: list[str]) -> bool:
+		if len(args) > 0 and (args[0] == "?" or args[0].lower() == "help"):
+			self.log_usage()
+			return True
+		if len(args) == 0:
+			logger.log("Error: Parameter '<command...>' is missing.", flag=logger.FLAG_ERROR)
+			return False
+		command = "".join(args)
+		logger.log(f"Sending:  {command}", flag=logger.FLAG_COMMAND)
+		try:
+			self.client.send_cmd(command)
+		except Exception as e:
+			logger.log_exception(e, before=[], after=[])
+			return False
+		return True
+
+
+class FileTransferCommand(ClientCommand):
+	def execute(self, sender: Socket | None, label: str, args: list[str]) -> bool:
+		if len(args) > 0 and (args[0] == "?" or args[0].lower() == "help"):
+			self.log_usage()
+			return True
+		if len(args) == 0:
+			logger.log("Error: Parameter '<src_path>' is missing.", flag=logger.FLAG_ERROR)
+			return False
+		if len(args) == 1:
+			logger.log("Error: Parameter '<dst_path>' is missing.", flag=logger.FLAG_ERROR)
+			return False
+		src_path = args[0]
+		dst_path = args[1]
+		logger.log(f"Sending file:",
+			 f"  from {self.client.sock.getsockname()}:  {src_path}",
+			 f"  to {self.client.sock.getpeername()}:  {dst_path}", flag=logger.FLAG_COMMAND)
+		try:
+			client.send_cmd("filereceive")
+			client.send_file(src_path, dst_path)
+		except Exception as e:
+			logger.log_exception(e, before=[], after=[])
+			return False
+		return True
+
+
+class FileReceiveCommand(ClientCommand):
+	def execute(self, sender: Socket | None, label: str, args: list[str]) -> bool:
+		try:
+			result = self.client.receive_file()
+			logger.log(f"Received file:  {result[0]} ({result[1]} bytes)")
+		except Exception as e:
+			logger.log_exception(e, before=[], after=[])
+			return False
+		except KeyboardInterrupt:
+			logger.log("Command exited.")
+			return False
+		return True
+
+
+commands: list[Command] = [
+	HelpCommand(client, "help", "?",
+		description="Display all available commands", syntax="help"),
+	InfoCommand(client, "info", "infos",
+		description="Display information about the client",
+		syntax="info"),
+	SendCommand(client, "send",
+		description="Send command to server",
+		syntax="send <command...>"),
+	FileTransferCommand(client, "filesend", "fs",
+		description="Transfer file to server",
+		syntax="filesend <src_path> <dst_path>"),
+	FileReceiveCommand(client, "filereceive", "fr",
+		description="Waiting for file from server",
+		syntax="filereceive"),
+]
+
+
 def receive_thread_func():
 	global server_close_order
 
-	while not client.is_closed():
-		try:
+	try:
+		while not client.is_closed():
 
 			cmd = client.receive_cmd()
 			if not cmd or cmd == "end":
@@ -37,9 +138,18 @@ def receive_thread_func():
 				logger.log_embed("Server order. Closing client...",
 					"Press enter to close...", flag=logger.FLAG_ERROR)
 				break
+			else:
+				command_found = False
+				for command in commands:
+					result = command.handle(client, cmd)
+					if result is not None:
+						command_found = True
+						break
+				if not command_found:
+					logger.log(f"Command not found:  {cmd}", flag=logger.FLAG_ERROR)
 
-		except Exception as e:
-			logger.log_exception(e)
+	except Exception as e:
+		logger.log_exception(e)
 
 
 def input_thread_func():
