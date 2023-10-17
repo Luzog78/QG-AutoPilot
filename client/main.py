@@ -1,6 +1,8 @@
 import sys
 sys.path.append(sys.path[0][:sys.path[0].rfind("/")])
 
+import os
+import json
 import threading
 import modules.logger as logger
 from modules.socket_utils import Socket, ClientSocket
@@ -20,6 +22,12 @@ logger.log_embed(f"Connected as {client.sock.getsockname()},",
 				 before=[], after=["", ""])
 
 logger.log(client.receive_msg(), "")
+
+
+config = {
+	"sd-path": "/home/luzog/Desktop/QG Workspace/stable-diffusion-webui",
+	"sd-port": 9876,
+}
 
 
 class HelpCommand(ClientCommand):
@@ -92,6 +100,9 @@ class FileTransferCommand(ClientCommand):
 
 class FileReceiveCommand(ClientCommand):
 	def execute(self, sender: Socket | None, label: str, args: list[str]) -> bool:
+		if len(args) > 0 and (args[0] == "?" or args[0].lower() == "help"):
+			self.log_usage()
+			return True
 		try:
 			result = self.client.receive_file()
 			logger.log(f"Received file:  {result[0]} ({result[1]} bytes)")
@@ -100,6 +111,72 @@ class FileReceiveCommand(ClientCommand):
 			return False
 		except KeyboardInterrupt:
 			logger.log("Command exited.")
+			return False
+		return True
+
+
+class ConfigCommand(ClientCommand):
+	def execute(self, sender: Socket | None, label: str, args: list[str]) -> bool:
+		if len(args) > 0 and (args[0] == "?" or args[0].lower() == "help"):
+			self.log_usage()
+			return True
+		if len(args) == 0:
+			logger.log("Error: Parameter 'all | list | <key>' is missing.", flag=logger.FLAG_ERROR)
+			return False
+		if args[0] == "all":
+			logger.log(f"Current config:")
+			dumped = json.dumps(config, indent=2)
+			for line in dumped.split("\n"):
+				logger.log(line)
+			return True
+		if args[0] == "list":
+			logger.log("Available config keys:")
+			for key in config:
+				logger.log(f"  > {key}")
+			return True
+		if args[0] not in config:
+			logger.log(f"Error: Unknown key '{args[0]}'.", flag=logger.FLAG_ERROR)
+			return False
+		key = args[0]
+		if len(args) > 1:
+			value = args[1] if len(args) > 1 else None
+			logger.log(f"Setting config:",
+				f"  key: {key}",
+				f"  value: {value}")
+			config[key] = value
+		else:
+			logger.log(f"Current config:",
+				f"  key: {key}",
+				f"  value: {config[key]}")
+		return True
+
+
+class LaunchCommand(ClientCommand):
+	def execute(self, sender: Socket | None, label: str, args: list[str]) -> bool:
+		if len(args) > 0 and (args[0] == "?" or args[0].lower() == "help"):
+			self.log_usage()
+			return True
+		logger.log(f"Launching stable-diffusion...")
+		os.system(f"gnome-terminal -- sh '/home/luzog/Desktop/QG Workspace/QG-AutoPilot/client/launch.sh' '{config['sd-path']}' --port {config['sd-port']} --api")
+		return True
+
+
+class SendCommand(ClientCommand):
+	def execute(self, sender: Socket | None, label: str, args: list[str]) -> bool:
+		if len(args) > 0 and (args[0] == "?" or args[0].lower() == "help"):
+			self.log_usage()
+			return True
+		if len(args) == 0:
+			logger.log("Error: Parameter '<command...>' is missing.", flag=logger.FLAG_ERROR)
+			return False
+		cmd = ""
+		for arg in args:
+			cmd += "'" + arg.replace("'", "\'") + "'"
+		try:
+			logger.log(f"Sending:  {cmd}", flag=logger.FLAG_COMMAND)
+			self.client.send_cmd(cmd)
+		except Exception as e:
+			logger.log_exception(e, before=[], after=[])
 			return False
 		return True
 
@@ -119,6 +196,15 @@ commands: list[Command] = [
 	FileReceiveCommand(client, "filereceive", "fr",
 		description="Waiting for file from server",
 		syntax="filereceive"),
+	ConfigCommand(client, "config", "c",
+		description="Set config value",
+		syntax=["config all","config list", "config <key> [<value>]"]),
+	LaunchCommand(client, "launch", "l",
+		description="Launch stable-diffusion",
+		syntax="launch"),
+	SendCommand(client, "send", "s",
+		description="Send command to server",
+		syntax="send <command...>"),
 ]
 
 
@@ -156,16 +242,23 @@ def input_thread_func():
 	while not client.is_closed():
 		try:
 
-			inp = input()
+			cmd = input()
 			if client.is_closed():
 				break
-			if not inp:
+			if not cmd:
 				continue
-			if inp == "quit":
+			if cmd == "quit":
 				client.close()
 				break
-			logger.log(f"Sending:  {inp}", flag=logger.FLAG_COMMAND)
-			client.send_cmd(inp)
+			else:
+				command_found = False
+				for command in commands:
+					result = command.handle(client, cmd)
+					if result is not None:
+						command_found = True
+						break
+				if not command_found:
+					logger.log(f"Command not found:  {cmd}", flag=logger.FLAG_ERROR)
 
 		except Exception as e:
 			logger.log_exception(e)
